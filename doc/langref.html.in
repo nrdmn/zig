@@ -9946,6 +9946,129 @@ Available libcs:
       <li>macOS x86_64</li>
       </ul>
       {#header_close#}
+      {#header_open|String Formatting#}
+      {#code_begin|test|fmt#}
+const assert = @import("std").debug.assert;
+const mem = @import("std").mem;
+const fmt = @import("std").fmt;
+
+test "string formatting" {
+    var buf: [100]u8 = undefined;
+
+    // Strings
+    // Format specifier 's' is required for C strings and optional for Zig strings.
+    assert(mem.eql(u8, "Hello, world!", try fmt.bufPrint(buf[0..], "{s}, {}!", "Hello", "world")));
+    assert(mem.eql(u8, "Hello, world!", try fmt.bufPrint(buf[0..], "{s}, {s}!", c"Hello", c"world")));
+
+    // Right Padding Strings
+    // Format specifier 's' is required for right padding
+    assert(mem.eql(u8, "Helloooo, world!", try fmt.bufPrint(buf[0..], "{s:o<8}, {}!", "Hello", "world")));
+    assert(mem.eql(u8, "Hello   , world!", try fmt.bufPrint(buf[0..], "{s:8}, {}!", "Hello", "world")));
+
+    // Integers
+    assert(mem.eql(u8, "123", try fmt.bufPrint(buf[0..], "{}", u8(123))));
+    assert(mem.eql(u8, "123", try fmt.bufPrint(buf[0..], "{d}", u8(123))));
+    assert(mem.eql(u8, "deadbeef", try fmt.bufPrint(buf[0..], "{x}", u32(0xdeadbeef))));
+    assert(mem.eql(u8, "DEADBEEF", try fmt.bufPrint(buf[0..], "{X}", u32(0xdeadbeef))));
+    assert(mem.eql(u8, "101010", try fmt.bufPrint(buf[0..], "{b}", u8(42))));
+    assert(mem.eql(u8, "a", try fmt.bufPrint(buf[0..], "{c}", u8('a'))));
+
+    // Left Padding Integers
+    assert(mem.eql(u8, "  123", try fmt.bufPrint(buf[0..], "{:5}", u8(123))));
+    assert(mem.eql(u8, "00123", try fmt.bufPrint(buf[0..], "{:0>5}", u8(123))));
+    assert(mem.eql(u8, "09f9", try fmt.bufPrint(buf[0..], "{x:0>4}", u16(0x9f9))));
+
+    // Bytes
+    // Bytes formatting does not support padding
+    // ISO/IEC 80000
+    assert(mem.eql(u8, "1.40625MiB", try fmt.bufPrint(buf[0..], "{Bi}", u32(1440*1024))));
+    assert(mem.eql(u8, "1.41MiB", try fmt.bufPrint(buf[0..], "{Bi:.2}", u32(1440*1024))));
+    // Binary prefixes
+    assert(mem.eql(u8, "1.47456MB", try fmt.bufPrint(buf[0..], "{B}", u32(1440*1024))));
+    assert(mem.eql(u8, "1.47MB", try fmt.bufPrint(buf[0..], "{B:.2}", u32(1440*1024))));
+
+    // Floats
+    // Floats do not support padding
+    assert(mem.eql(u8, "2.5e+00", try fmt.bufPrint(buf[0..], "{}", f16(2.5))));
+    assert(mem.eql(u8, "2.5", try fmt.bufPrint(buf[0..], "{d}", f16(2.5))));
+    assert(mem.eql(u8, "1.23", try fmt.bufPrint(buf[0..], "{d:.2}", f16(1.23456))));
+    assert(mem.eql(u8, "1.6021766208e-19", try fmt.bufPrint(buf[0..], "{e}", f64(1.6021766208e-19))));
+    assert(mem.eql(u8, "1.60218e-19", try fmt.bufPrint(buf[0..], "{e:.5}", f64(1.6021766208e-19))));
+
+    // Bools
+    assert(mem.eql(u8, "true", try fmt.bufPrint(buf[0..], "{}", true)));
+    assert(mem.eql(u8, "false", try fmt.bufPrint(buf[0..], "{}", false)));
+
+    // Optionals
+    const some: ?u8 = 35;
+    const none: ?u8 = null;
+    assert(mem.eql(u8, "23", try fmt.bufPrint(buf[0..], "{x}", some)));
+    assert(mem.eql(u8, "null", try fmt.bufPrint(buf[0..], "{x}", none)));
+
+    // Errors
+    const ok: anyerror!u8 = 5;
+    const err: anyerror!u8 = error.InvalidChar;
+    assert(mem.eql(u8, "5", try fmt.bufPrint(buf[0..], "{}", ok)));
+    assert(mem.eql(u8, "error.InvalidChar", try fmt.bufPrint(buf[0..], "{}", err)));
+
+    // Enums
+    const Enum = enum {
+        One,
+        Two,
+    };
+    assert(mem.eql(u8, "Enum.One", try fmt.bufPrint(buf[0..], "{}", Enum.One)));
+
+    // Structs
+    const S = struct {
+        foo: i32,
+        bar: i8,
+    };
+    const inst1 = S{ .bar = 65, .foo = 55, };
+    assert(mem.eql(u8, "S{ .foo = 55, .bar = 65 }", try fmt.bufPrint(buf[0..], "{}", inst1)));
+
+    const T = struct {
+        a: ?*@This(),
+    };
+    var inst2 = T{ .a = null, };
+    inst2.a = &inst2;
+    assert(mem.eql(u8, "T{ .a = T{ .a = T{ .a = T{ ... } } } }", try fmt.bufPrint(buf[0..], "{}", inst2)));
+
+    // Custom
+    const Vec2 = struct {
+        x: f32,
+        y: f32,
+
+        pub fn format(
+            self: @This(),
+            comptime f: []const u8,
+            options: fmt.FormatOptions,
+            context: var,
+            comptime Errors: type,
+            output: fn (@typeOf(context), []const u8) Errors!void,
+        ) Errors!void {
+            if (f.len == 0 or comptime mem.eql(u8, f, "p")) {
+                return fmt.format(context, Errors, output, "({d:.3},{d:.3})", self.x, self.y);
+            } else if (comptime mem.eql(u8, f, "d")) {
+                return fmt.format(context, Errors, output, "{d:.3}x{d:.3}", self.x, self.y);
+            } else {
+                @compileError("Unknown format character: '" ++ f ++ "'");
+            }
+        }
+    };
+    var point = Vec2{
+        .x = 10.2,
+        .y = 2.22,
+    };
+    assert(mem.eql(u8, "(10.200,2.220)", try fmt.bufPrint(buf[0..], "{}", point)));
+    assert(mem.eql(u8, "(10.200,2.220)", try fmt.bufPrint(buf[0..], "{p}", point)));
+    assert(mem.eql(u8, "10.200x2.220", try fmt.bufPrint(buf[0..], "{d}", point)));
+
+    // Positionals
+    assert(mem.eql(u8, "Hello, world!", try fmt.bufPrint(buf[0..], "{1}, {0}!", "world", "Hello")));
+    assert(mem.eql(u8, "13 37", try fmt.bufPrint(buf[0..], "{1x}{0x:3}", u8(0x37), u8(0x13))));
+}
+      {#code_end#}
+      {#header_close#}
       {#header_open|Style Guide#}
       <p>
 These coding conventions are not enforced by the compiler, but they are shipped in

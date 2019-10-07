@@ -38,15 +38,16 @@ fn peekIsAlign(comptime fmt: []const u8) bool {
     // Should only be called during a state transition to the format segment.
     std.debug.assert(fmt[0] == ':');
 
-    inline for (([_]u8{ 1, 2 })[0..]) |i| {
-        if (fmt.len > i and (fmt[i] == '<' or fmt[i] == '^' or fmt[i] == '>')) {
+    var i = 1;
+    inline while (i < fmt.len) : (i += 1) {
+        if (fmt[i] == '<' or fmt[i] == '^' or fmt[i] == '>') {
             return true;
         }
     }
     return false;
 }
 
-/// Renders fmt string with args, calling output with slices of bytes.
+/// Renders fmt string with args, calling `output` with slices of bytes.
 /// If `output` returns an error, the error is returned from `format` and
 /// `output` is not called again.
 pub fn format(
@@ -292,19 +293,19 @@ pub fn formatType(
     const T = @typeOf(value);
     switch (@typeInfo(T)) {
         .ComptimeInt, .Int, .Float => {
-            return formatValue(value, fmt, options, context, Errors, output);
+            return formatNumber(value, fmt, options, context, Errors, output);
         },
         .Void => {
-            return output(context, "void");
+            return formatBuf("void", options, context, Errors, output);
         },
         .Bool => {
-            return output(context, if (value) "true" else "false");
+            return formatBuf(if (value) "true" else "false", options, context, Errors, output);
         },
         .Optional => {
             if (value) |payload| {
                 return formatType(payload, fmt, options, context, Errors, output, max_depth);
             } else {
-                return output(context, "null");
+                return formatBuf("null", options, context, Errors, output);
             }
         },
         .ErrorUnion => {
@@ -425,7 +426,85 @@ pub fn formatType(
     }
 }
 
-fn formatValue(
+pub fn formatText(
+    bytes: []const u8,
+    comptime fmt: []const u8,
+    options: FormatOptions,
+    context: var,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+) Errors!void {
+    if (fmt.len == 0 or comptime std.mem.eql(u8, fmt, "s")) {
+        return formatBuf(bytes, options, context, Errors, output);
+    } else if (comptime (std.mem.eql(u8, fmt, "x") or std.mem.eql(u8, fmt, "X"))) {
+        const total_width = options.width orelse 0;
+        const hex_width = bytes.len*2;
+        const alignment = options.alignment orelse Alignment.Left;
+        var left_padding: usize = 0;
+        var right_padding: usize = 0;
+        if (total_width > hex_width) {
+            switch (alignment) {
+                .Left => {
+                    right_padding = total_width - hex_width;
+                },
+                .Center => {
+                    left_padding = (total_width - hex_width)/2;
+                    right_padding = (total_width - hex_width) - left_padding;
+                },
+                .Right => {
+                    left_padding = total_width - hex_width;
+                },
+            }
+        }
+        while (left_padding > 0) : (left_padding -= 1) {
+            try output(context, (*const [1]u8)(&options.fill));
+        }
+        for (bytes) |c| {
+            try formatInt(c, 16, fmt[0] == 'X', FormatOptions{ .width = 2, .fill = '0' }, context, Errors, output);
+        }
+        while (right_padding > 0) : (right_padding -= 1) {
+            try output(context, (*const [1]u8)(&options.fill));
+        }
+    } else {
+        @compileError("Unknown format string: '" ++ fmt ++ "'");
+    }
+}
+
+pub fn formatBuf(
+    buf: []const u8,
+    options: FormatOptions,
+    context: var,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+) Errors!void {
+    const width = options.width orelse 0;
+    const alignment = options.alignment orelse Alignment.Left;
+    var left_padding: usize = 0;
+    var right_padding: usize = 0;
+    if (width > buf.len) {
+        switch (alignment) {
+            .Left => {
+                right_padding = width - buf.len;
+            },
+            .Center => {
+                left_padding = (width - buf.len)/2;
+                right_padding = (width - buf.len) - left_padding;
+            },
+            .Right => {
+                left_padding = width - buf.len;
+            },
+        }
+    }
+    while (left_padding > 0) : (left_padding -= 1) {
+        try output(context, (*const [1]u8)(&options.fill));
+    }
+    try output(context, buf);
+    while (right_padding > 0) : (right_padding -= 1) {
+        try output(context, (*const [1]u8)(&options.fill));
+    }
+}
+
+fn formatNumber(
     value: var,
     comptime fmt: []const u8,
     options: FormatOptions,
@@ -439,15 +518,14 @@ fn formatValue(
         return formatBytes(value, options, 1024, context, Errors, output);
     }
 
-    const T = @typeOf(value);
-    switch (@typeId(T)) {
+    switch (@typeId(@typeOf(value))) {
         .Float => return formatFloatValue(value, fmt, options, context, Errors, output),
         .Int, .ComptimeInt => return formatIntValue(value, fmt, options, context, Errors, output),
         else => comptime unreachable,
     }
 }
 
-pub fn formatIntValue(
+fn formatIntValue(
     value: var,
     comptime fmt: []const u8,
     options: FormatOptions,
@@ -461,18 +539,16 @@ pub fn formatIntValue(
     const int_value = if (@typeOf(value) == comptime_int) blk: {
         const Int = math.IntFittingRange(value, value);
         break :blk Int(value);
-    } else
-        value;
+    } else value;
 
     if (fmt.len == 0 or comptime std.mem.eql(u8, fmt, "d")) {
         radix = 10;
         uppercase = false;
     } else if (comptime std.mem.eql(u8, fmt, "c")) {
-        if (@typeOf(int_value).bit_count <= 8) {
-            return formatAsciiChar(u8(int_value), options, context, Errors, output);
-        } else {
+        if (@typeOf(int_value).bit_count > 8) {
             @compileError("Cannot print integer that is larger than 8 bits as a ascii");
         }
+        return formatBuf([_]u8{int_value}, options, context, Errors, output);
     } else if (comptime std.mem.eql(u8, fmt, "b")) {
         radix = 2;
         uppercase = false;
@@ -487,6 +563,155 @@ pub fn formatIntValue(
     }
 
     return formatInt(int_value, radix, uppercase, options, context, Errors, output);
+}
+
+pub fn formatBytes(
+    value: var,
+    options: FormatOptions,
+    comptime radix: usize,
+    context: var,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+) Errors!void {
+    // TODO padding
+    if (value == 0) {
+        var new_options = options;
+        if (options.width) |width| {
+            if (width > 0) {
+                new_options.width = width - 1;
+            }
+        }
+        try formatFloatDecimal(0, options, context, Errors, output);
+        return output(context, "B");
+    }
+
+    const mags_si = " kMGTPEZY";
+    const mags_iec = " KMGTPEZY";
+    const magnitude = switch (radix) {
+        1000 => math.min(math.log2(value) / comptime math.log2(1000), mags_si.len - 1),
+        1024 => math.min(math.log2(value) / 10, mags_iec.len - 1),
+        else => unreachable,
+    };
+    const new_value = lossyCast(f64, value) / math.pow(f64, lossyCast(f64, radix), lossyCast(f64, magnitude));
+    const suffix = switch (radix) {
+        1000 => mags_si[magnitude],
+        1024 => mags_iec[magnitude],
+        else => unreachable,
+    };
+
+    try formatFloatDecimal(new_value, options, context, Errors, output);
+
+    if (suffix == ' ') {
+        return output(context, "B");
+    }
+
+    const buf = switch (radix) {
+        1000 => [_]u8{ suffix, 'B' },
+        1024 => [_]u8{ suffix, 'i', 'B' },
+        else => unreachable,
+    };
+    return output(context, buf);
+}
+
+pub fn formatInt(
+    value: var,
+    base: u8,
+    uppercase: bool,
+    options: FormatOptions,
+    context: var,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+) Errors!void {
+    const int_value = if (@typeOf(value) == comptime_int) blk: {
+        const Int = math.IntFittingRange(value, value);
+        break :blk Int(value);
+    } else
+        value;
+
+    if (@typeOf(int_value).is_signed) {
+        return formatIntSigned(int_value, base, uppercase, options, context, Errors, output);
+    } else {
+        return formatIntUnsigned(int_value, base, uppercase, options, context, Errors, output);
+    }
+}
+
+fn formatIntSigned(
+    value: var,
+    base: u8,
+    uppercase: bool,
+    options: FormatOptions,
+    context: var,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+) Errors!void {
+    // TODO padding
+    const new_options = FormatOptions{
+        .width = if (options.width) |w| (if (w == 0) 0 else w - 1) else null,
+        .precision = options.precision,
+        .fill = options.fill,
+    };
+
+    const uint = @IntType(false, @typeOf(value).bit_count);
+    if (value < 0) {
+        const minus_sign: u8 = '-';
+        try output(context, (*const [1]u8)(&minus_sign)[0..]);
+        const new_value = @intCast(uint, -(value + 1)) + 1;
+        return formatIntUnsigned(new_value, base, uppercase, new_options, context, Errors, output);
+    } else if (options.width == null or options.width.? == 0) {
+        // TODO what's this?
+        return formatIntUnsigned(@intCast(uint, value), base, uppercase, options, context, Errors, output);
+    } else {
+        const plus_sign: u8 = '+';
+        try output(context, (*const [1]u8)(&plus_sign)[0..]);
+        const new_value = @intCast(uint, value);
+        return formatIntUnsigned(new_value, base, uppercase, new_options, context, Errors, output);
+    }
+}
+
+fn formatIntUnsigned(
+    value: var,
+    base: u8,
+    uppercase: bool,
+    options: FormatOptions,
+    context: var,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+) Errors!void {
+    // TODO padding
+    assert(base >= 2);
+    var buf: [math.max(@typeOf(value).bit_count, 1)]u8 = undefined;
+    const min_int_bits = comptime math.max(@typeOf(value).bit_count, @typeOf(base).bit_count);
+    const MinInt = @IntType(@typeOf(value).is_signed, min_int_bits);
+    var a: MinInt = value;
+    var index: usize = buf.len;
+
+    while (true) {
+        const digit = a % base;
+        index -= 1;
+        buf[index] = digitToChar(@intCast(u8, digit), uppercase);
+        a /= base;
+        if (a == 0) break;
+    }
+
+    const digits_buf = buf[index..];
+    const width = options.width orelse 0;
+    const padding = if (width > digits_buf.len) (width - digits_buf.len) else 0;
+
+    if (padding > index) {
+        const zero_byte: u8 = options.fill;
+        var leftover_padding = padding - index;
+        while (true) {
+            try output(context, (*const [1]u8)(&zero_byte)[0..]);
+            leftover_padding -= 1;
+            if (leftover_padding == 0) break;
+        }
+        mem.set(u8, buf[0..index], options.fill);
+        return output(context, buf);
+    } else {
+        const padded_buf = buf[index - padding ..];
+        mem.set(u8, padded_buf[0..padding], options.fill);
+        return output(context, padded_buf);
+    }
 }
 
 fn formatFloatValue(
@@ -506,58 +731,9 @@ fn formatFloatValue(
     }
 }
 
-pub fn formatText(
-    bytes: []const u8,
-    comptime fmt: []const u8,
-    options: FormatOptions,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    if (fmt.len == 0) {
-        return output(context, bytes);
-    } else if (comptime std.mem.eql(u8, fmt, "s")) {
-        return formatBuf(bytes, options, context, Errors, output);
-    } else if (comptime (std.mem.eql(u8, fmt, "x") or std.mem.eql(u8, fmt, "X"))) {
-        for (bytes) |c| {
-            try formatInt(c, 16, fmt[0] == 'X', FormatOptions{ .width = 2, .fill = '0' }, context, Errors, output);
-        }
-        return;
-    } else {
-        @compileError("Unknown format string: '" ++ fmt ++ "'");
-    }
-}
-
-pub fn formatAsciiChar(
-    c: u8,
-    options: FormatOptions,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    return output(context, (*const [1]u8)(&c)[0..]);
-}
-
-pub fn formatBuf(
-    buf: []const u8,
-    options: FormatOptions,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    try output(context, buf);
-
-    const width = options.width orelse 0;
-    var leftover_padding = if (width > buf.len) (width - buf.len) else return;
-    const pad_byte: u8 = options.fill;
-    while (leftover_padding > 0) : (leftover_padding -= 1) {
-        try output(context, (*const [1]u8)(&pad_byte)[0..1]);
-    }
-}
-
-// Print a float in scientific notation to the specified precision. Null uses full precision.
-// It should be the case that every full precision, printed value can be re-parsed back to the
-// same type unambiguously.
+/// Print a float in scientific notation to the specified precision. Null uses full precision.
+/// It should be the case that every full precision, printed value can be re-parsed back to the
+/// same type unambiguously.
 pub fn formatFloatScientific(
     value: var,
     options: FormatOptions,
@@ -565,6 +741,7 @@ pub fn formatFloatScientific(
     comptime Errors: type,
     output: fn (@typeOf(context), []const u8) Errors!void,
 ) Errors!void {
+    // TODO padding
     var x = @floatCast(f64, value);
 
     // Errol doesn't handle these special cases.
@@ -651,8 +828,8 @@ pub fn formatFloatScientific(
     }
 }
 
-// Print a float of the format x.yyyyy where the number of y is specified by the precision argument.
-// By default floats are printed at full precision (no rounding).
+/// Print a float of the format x.yyyyy where the number of y is specified by the precision argument.
+/// By default floats are printed at full precision (no rounding).
 pub fn formatFloatDecimal(
     value: var,
     options: FormatOptions,
@@ -660,6 +837,7 @@ pub fn formatFloatDecimal(
     comptime Errors: type,
     output: fn (@typeOf(context), []const u8) Errors!void,
 ) Errors!void {
+    // TODO padding
     var x = f64(value);
 
     // Errol doesn't handle these special cases.
@@ -798,161 +976,6 @@ pub fn formatFloatDecimal(
     }
 }
 
-pub fn formatBytes(
-    value: var,
-    options: FormatOptions,
-    comptime radix: usize,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    if (value == 0) {
-        return output(context, "0B");
-    }
-
-    const mags_si = " kMGTPEZY";
-    const mags_iec = " KMGTPEZY";
-    const magnitude = switch (radix) {
-        1000 => math.min(math.log2(value) / comptime math.log2(1000), mags_si.len - 1),
-        1024 => math.min(math.log2(value) / 10, mags_iec.len - 1),
-        else => unreachable,
-    };
-    const new_value = lossyCast(f64, value) / math.pow(f64, lossyCast(f64, radix), lossyCast(f64, magnitude));
-    const suffix = switch (radix) {
-        1000 => mags_si[magnitude],
-        1024 => mags_iec[magnitude],
-        else => unreachable,
-    };
-
-    try formatFloatDecimal(new_value, options, context, Errors, output);
-
-    if (suffix == ' ') {
-        return output(context, "B");
-    }
-
-    const buf = switch (radix) {
-        1000 => [_]u8{ suffix, 'B' },
-        1024 => [_]u8{ suffix, 'i', 'B' },
-        else => unreachable,
-    };
-    return output(context, buf);
-}
-
-pub fn formatInt(
-    value: var,
-    base: u8,
-    uppercase: bool,
-    options: FormatOptions,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    const int_value = if (@typeOf(value) == comptime_int) blk: {
-        const Int = math.IntFittingRange(value, value);
-        break :blk Int(value);
-    } else
-        value;
-
-    if (@typeOf(int_value).is_signed) {
-        return formatIntSigned(int_value, base, uppercase, options, context, Errors, output);
-    } else {
-        return formatIntUnsigned(int_value, base, uppercase, options, context, Errors, output);
-    }
-}
-
-fn formatIntSigned(
-    value: var,
-    base: u8,
-    uppercase: bool,
-    options: FormatOptions,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    const new_options = FormatOptions{
-        .width = if (options.width) |w| (if (w == 0) 0 else w - 1) else null,
-        .precision = options.precision,
-        .fill = options.fill,
-    };
-
-    const uint = @IntType(false, @typeOf(value).bit_count);
-    if (value < 0) {
-        const minus_sign: u8 = '-';
-        try output(context, (*const [1]u8)(&minus_sign)[0..]);
-        const new_value = @intCast(uint, -(value + 1)) + 1;
-        return formatIntUnsigned(new_value, base, uppercase, new_options, context, Errors, output);
-    } else if (options.width == null or options.width.? == 0) {
-        return formatIntUnsigned(@intCast(uint, value), base, uppercase, options, context, Errors, output);
-    } else {
-        const plus_sign: u8 = '+';
-        try output(context, (*const [1]u8)(&plus_sign)[0..]);
-        const new_value = @intCast(uint, value);
-        return formatIntUnsigned(new_value, base, uppercase, new_options, context, Errors, output);
-    }
-}
-
-fn formatIntUnsigned(
-    value: var,
-    base: u8,
-    uppercase: bool,
-    options: FormatOptions,
-    context: var,
-    comptime Errors: type,
-    output: fn (@typeOf(context), []const u8) Errors!void,
-) Errors!void {
-    assert(base >= 2);
-    var buf: [math.max(@typeOf(value).bit_count, 1)]u8 = undefined;
-    const min_int_bits = comptime math.max(@typeOf(value).bit_count, @typeOf(base).bit_count);
-    const MinInt = @IntType(@typeOf(value).is_signed, min_int_bits);
-    var a: MinInt = value;
-    var index: usize = buf.len;
-
-    while (true) {
-        const digit = a % base;
-        index -= 1;
-        buf[index] = digitToChar(@intCast(u8, digit), uppercase);
-        a /= base;
-        if (a == 0) break;
-    }
-
-    const digits_buf = buf[index..];
-    const width = options.width orelse 0;
-    const padding = if (width > digits_buf.len) (width - digits_buf.len) else 0;
-
-    if (padding > index) {
-        const zero_byte: u8 = options.fill;
-        var leftover_padding = padding - index;
-        while (true) {
-            try output(context, (*const [1]u8)(&zero_byte)[0..]);
-            leftover_padding -= 1;
-            if (leftover_padding == 0) break;
-        }
-        mem.set(u8, buf[0..index], options.fill);
-        return output(context, buf);
-    } else {
-        const padded_buf = buf[index - padding ..];
-        mem.set(u8, padded_buf[0..padding], options.fill);
-        return output(context, padded_buf);
-    }
-}
-
-pub fn formatIntBuf(out_buf: []u8, value: var, base: u8, uppercase: bool, options: FormatOptions) usize {
-    var context = FormatIntBuf{
-        .out_buf = out_buf,
-        .index = 0,
-    };
-    formatInt(value, base, uppercase, options, &context, error{}, formatIntCallback) catch unreachable;
-    return context.index;
-}
-const FormatIntBuf = struct {
-    out_buf: []u8,
-    index: usize,
-};
-fn formatIntCallback(context: *FormatIntBuf, bytes: []const u8) (error{}!void) {
-    mem.copy(u8, context.out_buf[context.index..], bytes);
-    context.index += bytes.len;
-}
-
 pub fn parseInt(comptime T: type, buf: []const u8, radix: u8) !T {
     if (!T.is_signed) return parseUnsigned(T, buf, radix);
     if (buf.len == 0) return T(0);
@@ -1086,28 +1109,6 @@ pub fn allocPrint(allocator: *mem.Allocator, comptime fmt: []const u8, args: ...
 
 fn countSize(size: *usize, bytes: []const u8) (error{}!void) {
     size.* += bytes.len;
-}
-
-test "bufPrintInt" {
-    var buffer: [100]u8 = undefined;
-    const buf = buffer[0..];
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, i32(-12345678), 2, false, FormatOptions{}), "-101111000110000101001110"));
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, i32(-12345678), 10, false, FormatOptions{}), "-12345678"));
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, i32(-12345678), 16, false, FormatOptions{}), "-bc614e"));
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, i32(-12345678), 16, true, FormatOptions{}), "-BC614E"));
-
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, u32(12345678), 10, true, FormatOptions{}), "12345678"));
-
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, u32(666), 10, false, FormatOptions{ .width = 6 }), "   666"));
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, u32(0x1234), 16, false, FormatOptions{ .width = 6 }), "  1234"));
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, u32(0x1234), 16, false, FormatOptions{ .width = 1 }), "1234"));
-
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, i32(42), 10, false, FormatOptions{ .width = 3 }), "+42"));
-    testing.expect(mem.eql(u8, bufPrintIntToSlice(buf, i32(-42), 10, false, FormatOptions{ .width = 3 }), "-42"));
-}
-
-fn bufPrintIntToSlice(buf: []u8, value: var, base: u8, uppercase: bool, options: FormatOptions) []u8 {
-    return buf[0..formatIntBuf(buf, value, base, uppercase, options)];
 }
 
 test "parse u64 digit too big" {
