@@ -514,8 +514,6 @@ static LLVMValueRef make_fn_llvm_value(CodeGen *g, ZigFn *fn) {
         }
         if (g->have_stack_probing && !fn->def_scope->safety_off) {
             addLLVMFnAttrStr(llvm_fn, "probe-stack", "__zig_probe_stack");
-        } else if (g->zig_target->os == OsUefi) {
-            addLLVMFnAttrStr(llvm_fn, "no-stack-arg-probe", "");
         }
     } else {
         maybe_import_dll(g, llvm_fn, linkage);

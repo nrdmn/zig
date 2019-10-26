@@ -269,6 +269,7 @@ Os target_os_enum(size_t index) {
 ZigLLVM_OSType get_llvm_os_type(Os os_type) {
     switch (os_type) {
         case OsFreestanding:
+        case OsUefi:
         case OsZen:
             return ZigLLVM_UnknownOS;
         case OsAnanas:
@@ -298,7 +299,6 @@ ZigLLVM_OSType get_llvm_os_type(Os os_type) {
         case OsSolaris:
             return ZigLLVM_Solaris;
         case OsWindows:
-        case OsUefi:
             return ZigLLVM_Win32;
         case OsHaiku:
             return ZigLLVM_Haiku;
