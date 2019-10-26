@@ -840,12 +840,13 @@ void target_triple_zig(Buf *triple, const ZigTarget *target) {
 
 void target_triple_llvm(Buf *triple, const ZigTarget *target) {
     buf_resize(triple, 0);
-    buf_appendf(triple, "%s%s-%s-%s-%s",
+    buf_appendf(triple, "%s%s-%s-%s-%s-%s",
             ZigLLVMGetArchTypeName(target->arch),
             ZigLLVMGetSubArchTypeName(target->sub_arch),
             ZigLLVMGetVendorTypeName(target->vendor),
             ZigLLVMGetOSTypeName(get_llvm_os_type(target->os)),
-            ZigLLVMGetEnvironmentTypeName(target->abi));
+            ZigLLVMGetEnvironmentTypeName(target->abi),
+            target_oformat_name(target_object_format(target)));
 }
 
 bool target_os_is_darwin(Os os) {
