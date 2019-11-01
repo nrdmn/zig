@@ -5086,6 +5086,7 @@ test "peer type resolution: *const T and ?*T" {
           <li>A {#link|struct#} with all fields being zero bit types.</li>
           <li>A {#link|union#} with only 1 field which is a zero bit type.</li>
           <li>{#link|Pointers to Zero Bit Types#} are themselves zero bit types.</li>
+          <li>{#syntax#}type{#endsyntax#} is a zero bit type.</li>
       </ul>
       <p>
       These types can only ever have one possible value, and thus
