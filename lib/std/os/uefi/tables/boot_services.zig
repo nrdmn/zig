@@ -80,7 +80,8 @@ pub const BootServices = extern struct {
     /// Terminates all boot services.
     exitBootServices: extern fn (Handle, usize) usize,
 
-    getNextMonotonicCount: usize, // TODO
+    /// Returns a monotonically increasing count for the platform.
+    getNextMonotonicCount: extern fn (*u64) usize,
 
     /// Induces a fine-grained stall.
     stall: extern fn (usize) usize,
