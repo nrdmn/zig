@@ -100,7 +100,8 @@ pub const BootServices = extern struct {
     /// Retrieves the list of agents that currently have a protocol interface opened.
     openProtocolInformation: extern fn (Handle, *align(8) const Guid, *[*]ProtocolInformationEntry, *usize) usize,
 
-    protocolsPerHandle: usize, // TODO
+    /// Retrieves the list of protocol interface GUIDs that are installed on a handle in a buffer allocated from pool.
+    protocolsPerHandle: extern fn (Handle, *[*]*align(8) const Guid, *usize) usize,
 
     /// Returns an array of handles that support the requested protocol in a buffer allocated from pool.
     locateHandleBuffer: extern fn (LocateSearchType, ?*align(8) const Guid, ?*const c_void, *usize, *[*]Handle) usize,
