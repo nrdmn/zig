@@ -19,16 +19,23 @@ const DevicePathProtocol = uefi.protocols.DevicePathProtocol;
 pub const BootServices = extern struct {
     hdr: TableHeader,
 
-    raiseTpl: usize, // TODO
-    restoreTpl: usize, // TODO
-    allocatePages: usize, // TODO
-    freePages: usize, // TODO
+    /// Raises a task's priority level and returns its previous level.
+    raiseTpl: extern fn (usize) usize,
+
+    /// Restores a task's priority level to its previous value.
+    restoreTpl: extern fn (usize) void,
+
+    /// Allocates memory pages from the system.
+    allocatePages: extern fn (AllocateType, MemoryType, usize, *[*]align(4096) u8) usize,
+
+    /// Frees memory pages.
+    freePages: extern fn ([*]align(4096) u8, usize) usize,
 
     /// Returns the current memory map.
     getMemoryMap: extern fn (*usize, [*]MemoryDescriptor, *usize, *usize, *u32) usize,
 
     /// Allocates pool memory.
-    allocatePool: extern fn (MemoryType, usize, *align(8) [*]u8) usize,
+    allocatePool: extern fn (MemoryType, usize, *[*]align(8) u8) usize,
 
     /// Returns pool memory to the system.
     freePool: extern fn ([*]align(8) u8) usize,
@@ -61,7 +68,10 @@ pub const BootServices = extern struct {
     reserved: *c_void,
 
     registerProtocolNotify: usize, // TODO
-    locateHandle: usize, // TODO
+
+    /// Returns an array of handles that support a specified protocol.
+    locateHandle: extern fn (LocateSearchType, ?*align(8) const Guid, ?*const c_void, *usize, [*]Handle) usize,
+
     locateDevicePath: usize, // TODO
     installConfigurationTable: usize, // TODO
 
@@ -112,9 +122,16 @@ pub const BootServices = extern struct {
 
     installMultipleProtocolInterfaces: usize, // TODO
     uninstallMultipleProtocolInterfaces: usize, // TODO
-    calculateCrc32: usize, // TODO
-    copyMem: usize, // TODO
-    setMem: usize, // TODO
+
+    /// Computes and returns a 32-bit CRC for a data buffer.
+    calculateCrc32: extern fn ([*]const u8, usize, *u32) usize,
+
+    /// Copies the contents of one buffer to another buffer
+    copyMem: extern fn ([*]u8, [*]const u8, usize) void,
+
+    /// Fills a buffer with a specified value
+    setMem: extern fn ([*]u8, usize, u8) void,
+
     createEventEx: usize, // TODO
 
     pub const signature: u64 = 0x56524553544f4f42;
@@ -203,4 +220,10 @@ pub const ProtocolInformationEntry = extern struct {
     controller_handle: ?Handle,
     attributes: OpenProtocolAttributes,
     open_count: u32,
+};
+
+pub const AllocateType = extern enum(u32) {
+    AllocateAnyPages,
+    AllocateMaxAddress,
+    AllocateAddress,
 };
